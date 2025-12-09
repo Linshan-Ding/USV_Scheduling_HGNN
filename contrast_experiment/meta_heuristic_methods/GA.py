@@ -3,15 +3,15 @@ import os
 import random
 import numpy as np
 import copy
-import matplotlib.pyplot as plt
+import matplotpilib.pyplot as plt
 from datetime import datetime
 from typing import Dict, List, Any, Tuple
 import itertools
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from base_planner import BasePlanner, Task, USV
-from utils import calculate_distance, simple_energy_model, DataConverter
-from data_adapter import load_and_adapt_data
+from contrast_experiment.base_planner import BasePlanner, Task, USV
+from contrast_experiment.utils import calculate_distance, simple_energy_model, DataConverter
+from contrast_experiment.data_adapter import load_and_adapt_data
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'SimSun']
 plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
