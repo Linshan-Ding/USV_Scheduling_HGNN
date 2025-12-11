@@ -161,26 +161,54 @@ class PPO:
 
     def _prepare_state(self, state_dict, batch=False):
         """
-        转换状态为 Tensor。
-        如果 batch=True, 输入是 list of dicts -> dict of batch tensors
-        如果 batch=False, 输入是 dict -> dict of batch=1 tensors
+        转换状态为 Tensor。支持混合规模输入的自动 Padding。
         """
         if not batch:
+            # 单个样本处理 (保持不变)
             return {
                 'usv_features': torch.FloatTensor(state_dict['usv_features']).unsqueeze(0).to(self.device),
-                'task_features': torch.FloatTensor(state_dict['task_features']).unsqueeze(0).to(self.device),
-                # 修正：之前代码有 task_coords 键错误，这里根据前文 hgnn.py 修正，假设在 task_features 里
-                # 如果 hgnn 需要 coords，确保这里有传递
                 'task_features': torch.FloatTensor(state_dict['task_features']).unsqueeze(0).to(self.device)
             }
         else:
-            # Batch 处理
-            # state_dict 是一个列表: [s1, s2, ...]
-            usv_feats = torch.FloatTensor(np.array([s['usv_features'] for s in state_dict])).to(self.device)
-            task_feats = torch.FloatTensor(np.array([s['task_features'] for s in state_dict])).to(self.device)
+            # === 修复：混合规模 Batch 处理 (Padding) ===
+            # state_dict 是列表: [{'usv_features': ..., 'task_features': ...}, ...]
+
+            # 1. 获取当前 Batch 中最大的维度
+            n_samples = len(state_dict)
+            max_n_usvs = max(s['usv_features'].shape[0] for s in state_dict)
+            max_n_tasks = max(s['task_features'].shape[0] for s in state_dict)
+
+            # 获取特征维度 (假设所有样本特征维度一致)
+            usv_dim = state_dict[0]['usv_features'].shape[1]  # 通常是 4
+            task_dim = state_dict[0]['task_features'].shape[1]  # 通常是 5
+
+            # 2. 初始化全零 Padding Tensor
+            padded_usvs = torch.zeros((n_samples, max_n_usvs, usv_dim), dtype=torch.float32).to(self.device)
+            padded_tasks = torch.zeros((n_samples, max_n_tasks, task_dim), dtype=torch.float32).to(self.device)
+
+            # 3. 填充数据并处理 Mask
+            for i, s in enumerate(state_dict):
+                u_data = s['usv_features']  # numpy array
+                t_data = s['task_features']  # numpy array
+
+                curr_usvs = u_data.shape[0]
+                curr_tasks = t_data.shape[0]
+
+                # 复制真实数据
+                padded_usvs[i, :curr_usvs, :] = torch.from_numpy(u_data).to(self.device)
+                padded_tasks[i, :curr_tasks, :] = torch.from_numpy(t_data).to(self.device)
+
+                # --- 关键 Mask 处理 ---
+                # 对于填充的任务，将 Scheduled (索引4) 设为 1
+                # 这样 hgnn.py 中的 adj_matrix 计算会将其 Mask 掉 (1 - 1 = 0)
+                if curr_tasks < max_n_tasks:
+                    padded_tasks[i, curr_tasks:, 4] = 1.0
+                    # 可选：将填充任务坐标设为无穷远，避免干扰 KNN
+                    padded_tasks[i, curr_tasks:, 0:2] = 99999.0
+
             return {
-                'usv_features': usv_feats,
-                'task_features': task_feats
+                'usv_features': padded_usvs,
+                'task_features': padded_tasks
             }
 
     def store_transition(self, state, avail_actions, action_idx, reward, log_prob, done, value):
